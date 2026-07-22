@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools==75.6.0", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "service-of-import"
+version = "0.1.0"
+description = "Backend scaffold for importing warehouse stock reports"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic==1.14.0",
+    "boto3==1.35.81",
+    "fastapi==0.115.6",
+    "psycopg[binary]==3.2.3",
+    "pydantic-settings==2.7.0",
+    "python-multipart==0.0.20",
+    "sqlalchemy==2.0.36",
+    "uvicorn[standard]==0.34.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx==0.28.1",
+    "mypy==1.13.0",
+    "pytest==8.3.4",
+    "ruff==0.8.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "RUF", "SIM", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["app", "tests"]
+pretty = true
+show_error_codes = true
+

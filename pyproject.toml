@@ -33,6 +33,9 @@ include = ["app*"]
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
 testpaths = ["tests"]
+markers = [
+    "integration: requires the disposable PostgreSQL test database",
+]
 
 [tool.ruff]
 target-version = "py312"
@@ -51,4 +54,3 @@ strict = true
 files = ["app", "tests"]
 pretty = true
 show_error_codes = true
-

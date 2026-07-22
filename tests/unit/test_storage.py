@@ -8,6 +8,8 @@ from app.config import Settings
 from app.errors import FileTooLargeError, StorageUnavailableError
 from app.services.storage import UPLOAD_PART_SIZE, S3ObjectStorage
 
+pytestmark = pytest.mark.unit
+
 
 class GuardedStream(BytesIO):
     def __init__(self, content: bytes) -> None:

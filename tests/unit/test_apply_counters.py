@@ -2,6 +2,8 @@ import pytest
 
 from app.services.apply_report import classify_stock_change
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.parametrize(
     ("previous", "explicit", "warehouse_in_report", "expected"),

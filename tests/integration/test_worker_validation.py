@@ -13,7 +13,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
 from app.models import Product, Report, ReportError, ReportStagingRow, StockBalance, Warehouse
-from app.services.report_processing import WorkerCycleOutcome, process_next_report
+from app.services.report_processing import (
+    LockConnectionLost,
+    ReportProcessor,
+    WorkerCycleOutcome,
+    process_next_report,
+)
 from app.services.storage import S3ObjectStorage
 
 pytestmark = pytest.mark.integration
@@ -395,6 +400,43 @@ def test_existing_lock_makes_worker_skip_processing(
         report = session.get(Report, report_id)
         assert report is not None
         assert report.status == "pending"
+
+
+def test_lost_lock_connection_stops_attempt_and_leaves_report_recoverable(
+    test_engine: Engine,
+    test_session_factory: sessionmaker[Session],
+    worker_storage: S3ObjectStorage,
+) -> None:
+    report_id = create_report(
+        test_session_factory,
+        worker_storage,
+        (HEADER + "WH,W,SKU,P,1\n").encode(),
+    )
+    processor = ReportProcessor(worker_storage, test_session_factory, batch_size=2)
+
+    with test_engine.connect() as lost_connection:
+        lost_connection.close()
+        with pytest.raises(LockConnectionLost):
+            processor.process(lost_connection)
+
+    with test_session_factory() as session, session.begin():
+        report = session.get(Report, report_id)
+        assert report is not None
+        assert report.status == "processing"
+        assert report.row_count == 0
+        assert subject_counts(session) == (0, 0, 0)
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(ReportStagingRow)
+                .where(ReportStagingRow.report_id == report_id)
+            )
+            == 0
+        )
+
+    assert run_worker(test_engine, worker_storage, test_session_factory) == (
+        WorkerCycleOutcome.VALIDATED
+    )
 
 
 def test_error_and_staging_writes_use_bounded_batches(

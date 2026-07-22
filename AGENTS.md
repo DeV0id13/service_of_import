@@ -2,19 +2,18 @@
 
 ## Current phase
 
-The repository is in the planning phase. Until the user explicitly requests implementation, do not add application code, business logic, migrations, Docker configuration, dependencies, or generated fixtures.
+The test assignment is fully implemented: upload and report APIs, FIFO worker,
+streaming validation, atomic snapshot apply, read APIs, examples, and smoke checks
+are present. `README.md` is the primary runbook, while
+`docs/test-assignment.docx` remains the source assignment and
+`docs/architecture.md` the technical contract.
 
-The approved files for this phase are:
+The current Alembic head is `0002_add_report_checksum`. Preserve the completed
+business semantics and prefer targeted fixes over new features or broad refactors.
 
-- `docs/architecture.md`;
-- `docs/implementation-plan.md`;
-- `AGENTS.md`.
+## Project commands
 
-Use `docs/test-assignment.docx` as the source assignment and `docs/architecture.md` as the technical contract.
-
-## Target commands
-
-These commands describe the intended interface after implementation. They are not expected to work during the documentation-only phase.
+These commands are the supported project interface.
 
 ### Start and stop
 

@@ -9,6 +9,8 @@ from app.services.csv_validation import (
     validate_csv_stream,
 )
 
+pytestmark = pytest.mark.unit
+
 HEADER = "warehouse_code,warehouse_name,sku,product_name,quantity\n"
 
 

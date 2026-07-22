@@ -264,8 +264,8 @@ Compose:
 
 ```bash
 docker compose run --rm api pytest -q
-docker compose run --rm api pytest -q tests/unit tests/test_health.py
-docker compose run --rm api pytest -q tests/integration
+docker compose run --rm api pytest -q -m unit
+docker compose run --rm api pytest -q -m integration
 docker compose run --rm api ruff check .
 docker compose run --rm api ruff format --check .
 docker compose run --rm api mypy app tests

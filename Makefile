@@ -18,10 +18,10 @@ test:
 	$(COMPOSE) run --rm api pytest -q
 
 test-unit:
-	$(COMPOSE) run --rm api pytest -q tests/unit tests/test_health.py
+	$(COMPOSE) run --rm api pytest -q -m unit
 
 test-integration:
-	$(COMPOSE) run --rm api pytest -q tests/integration
+	$(COMPOSE) run --rm api pytest -q -m integration
 
 lint:
 	$(COMPOSE) run --rm api ruff check .

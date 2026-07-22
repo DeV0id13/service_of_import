@@ -3,10 +3,10 @@
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.uv-cache/
 .venv/
 __pycache__/
 *.egg-info/
 *.py[cod]
 build/
 dist/
-

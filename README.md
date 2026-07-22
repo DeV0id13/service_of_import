@@ -276,6 +276,29 @@ docker compose run --rm api alembic check
 Короткие эквиваленты: `make test`, `make test-unit`, `make test-integration`,
 `make lint`, `make format-check`, `make typecheck`, `make check`.
 
+Для локальных quality/unit-проверок без Docker используется зафиксированное
+окружение `uv`. Dev-инструменты объявлены optional extra `dev`:
+
+```bash
+uv lock --check
+uv sync --locked --extra dev
+uv run --locked ruff check .
+uv run --locked ruff format --check .
+uv run --locked mypy app tests
+uv run --locked pytest -q -ra -m unit
+```
+
+## CI
+
+GitHub Actions запускается для push в `main`/`master`, pull request и вручную.
+Jobs `quality` и `unit-tests` используют Python 3.12 и установку из `uv.lock`;
+зависимый `integration` поднимает PostgreSQL и MinIO через Compose, проверяет
+миграции, integration-тесты и `scripts/smoke.sh`. При сбое выводятся Compose
+status/logs, а сервисы всегда останавливаются без удаления volumes.
+
+CI не использует GitHub secrets: только демонстрационная `.env.example` внутри
+одноразового runner.
+
 Integration-тесты пересоздают только БД из `TEST_DATABASE_URL`; её имя обязано
 оканчиваться на `_test`. Не указывайте основную БД приложения.
 

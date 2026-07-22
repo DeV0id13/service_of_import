@@ -27,6 +27,18 @@ class ReportNotFoundError(ServiceError):
     public_message = "Report not found"
 
 
+class WarehouseNotFoundError(ServiceError):
+    status_code = 404
+    code = "warehouse_not_found"
+    public_message = "Warehouse not found"
+
+
+class ProductNotFoundError(ServiceError):
+    status_code = 404
+    code = "product_not_found"
+    public_message = "Product not found"
+
+
 class ReportPersistenceError(ServiceError):
     pass
 

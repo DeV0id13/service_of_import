@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.api.errors import ERROR_HANDLERS
 from app.api.health import router as health_router
+from app.api.inventory import router as inventory_router
 from app.api.reports import router as reports_router
 from app.config import get_settings
 from app.logging import configure_logging
@@ -33,6 +34,7 @@ def create_app() -> FastAPI:
         application.add_exception_handler(exception_type, handler)
     application.include_router(health_router)
     application.include_router(reports_router)
+    application.include_router(inventory_router)
     return application
 
 

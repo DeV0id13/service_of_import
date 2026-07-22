@@ -5,7 +5,14 @@ from fastapi import APIRouter, Depends, File, Path, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from app.dependencies import get_report_service
-from app.schemas import ReportDetails, ReportListResponse, ReportStatus, ReportSummary
+from app.schemas import (
+    ErrorResponse,
+    ReportDetails,
+    ReportErrorListResponse,
+    ReportListResponse,
+    ReportStatus,
+    ReportSummary,
+)
 from app.services.reports import ReportService
 
 router = APIRouter(prefix="/api/v1/reports", tags=["reports"])
@@ -41,6 +48,34 @@ def get_report(
     report_id: Annotated[int, Path(gt=0)],
 ) -> ReportDetails:
     return ReportDetails.model_validate(service.get_report(report_id))
+
+
+@router.get(
+    "/{report_id}/errors",
+    response_model=ReportErrorListResponse,
+    summary="List report errors",
+    description=(
+        "Return stored validation or processing errors for a report in logical line order."
+    ),
+    responses={
+        404: {"model": ErrorResponse, "description": "Report not found."},
+        422: {"model": ErrorResponse, "description": "Invalid path or query parameters."},
+    },
+)
+def list_report_errors(
+    service: ReportServiceDependency,
+    report_id: Annotated[int, Path(gt=0, description="Report identifier.")],
+    limit: Annotated[
+        int,
+        Query(ge=1, le=200, description="Maximum number of errors to return."),
+    ] = 50,
+    offset: Annotated[
+        int,
+        Query(ge=0, description="Number of sorted errors to skip."),
+    ] = 0,
+) -> ReportErrorListResponse:
+    page = service.list_errors(report_id, limit=limit, offset=offset)
+    return ReportErrorListResponse.model_validate(page)
 
 
 @router.get("/{report_id}/original")

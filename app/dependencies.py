@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import SessionFactory
+from app.services.read_api import ReadApiService
 from app.services.reports import ReportService
 from app.services.storage import ObjectStorage, S3ObjectStorage
 
@@ -30,3 +31,9 @@ def get_report_service(
         session_factory=session_factory,
         bucket=settings.s3_bucket,
     )
+
+
+def get_read_api_service(
+    session_factory: Annotated[Callable[[], Session], Depends(get_session_factory)],
+) -> ReadApiService:
+    return ReadApiService(session_factory)

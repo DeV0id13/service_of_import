@@ -29,7 +29,11 @@ API: <http://localhost:8000>
 - `POST /api/v1/reports` — потоково сохранить оригинал и создать `pending`;
 - `GET /api/v1/reports` — список отчётов;
 - `GET /api/v1/reports/{id}` — детали отчёта;
+- `GET /api/v1/reports/{id}/errors` — пагинированные ошибки отчёта;
 - `GET /api/v1/reports/{id}/original` — потоково скачать оригинал;
+- `GET /api/v1/warehouses` и `GET /api/v1/warehouses/{id}` — склады;
+- `GET /api/v1/products` и `GET /api/v1/products/{id}` — товары;
+- `GET /api/v1/stocks` — денормализованные остатки с фильтрами и пагинацией;
 - Swagger UI: <http://localhost:8000/docs>;
 - MinIO Console: <http://localhost:9001>.
 

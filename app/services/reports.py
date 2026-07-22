@@ -15,7 +15,7 @@ from app.errors import (
     ReportPersistenceError,
     StorageUnavailableError,
 )
-from app.models import Report
+from app.models import Report, ReportError
 from app.services.storage import MAX_UPLOAD_BYTES, ObjectStorage, ReadableStream
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,14 @@ class ReportPage:
 class ReportDownload:
     report: Report
     chunks: Iterator[bytes]
+
+
+@dataclass(frozen=True, slots=True)
+class ReportErrorPage:
+    items: list[ReportError]
+    total: int
+    limit: int
+    offset: int
 
 
 class ReportService:
@@ -141,6 +149,31 @@ class ReportService:
             if report is None:
                 raise ReportNotFoundError
         return report
+
+    def list_errors(self, report_id: int, *, limit: int, offset: int) -> ReportErrorPage:
+        with self._session_factory() as session, session.begin():
+            report_exists = session.scalar(select(Report.id).where(Report.id == report_id))
+            if report_exists is None:
+                raise ReportNotFoundError
+
+            error_filter = ReportError.report_id == report_id
+            total = (
+                session.scalar(select(func.count()).select_from(ReportError).where(error_filter))
+                or 0
+            )
+            items = list(
+                session.scalars(
+                    select(ReportError)
+                    .where(error_filter)
+                    .order_by(
+                        ReportError.line_number.asc().nulls_first(),
+                        ReportError.id,
+                    )
+                    .limit(limit)
+                    .offset(offset)
+                )
+            )
+        return ReportErrorPage(items=items, total=total, limit=limit, offset=offset)
 
     def download_original(self, report_id: int) -> ReportDownload:
         report = self.get_report(report_id)

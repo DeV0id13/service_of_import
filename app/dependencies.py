@@ -3,10 +3,11 @@ from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db import SessionFactory
+from app.db import SessionFactory, readiness_engine
 from app.services.read_api import ReadApiService
 from app.services.reports import ReportService
 from app.services.storage import ObjectStorage, S3ObjectStorage
@@ -19,6 +20,10 @@ def get_storage() -> ObjectStorage:
 
 def get_session_factory() -> Callable[[], Session]:
     return SessionFactory
+
+
+def get_readiness_engine() -> Engine:
+    return readiness_engine
 
 
 def get_report_service(

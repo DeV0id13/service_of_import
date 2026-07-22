@@ -13,7 +13,7 @@ class ReportSummary(BaseModel):
     status: ReportStatus
     original_filename: str
     size_bytes: int
-    checksum_sha256: str
+    checksum_sha256: str | None
     created_at: datetime
 
 

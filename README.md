@@ -13,6 +13,8 @@ Backend-сервис принимает полные CSV-снимки остат
 - MinIO хранит зарегистрированные оригиналы независимо от результата валидации.
 - Worker читает CSV потоково и пишет проверенные строки в staging ограниченными
   batch-ами.
+- Worker обрабатывает `SIGTERM`/`SIGINT`, завершает текущий cycle и не берёт новый
+  отчёт после запроса остановки.
 - Session-level PostgreSQL advisory lock сериализует worker-процессы.
 - Склады, товары и остатки не меняются до успешной проверки всего файла.
 - Upsert каталогов, явные остатки, selective zeroing, счётчики и `completed`
@@ -61,6 +63,10 @@ cp .env.example .env
 | `S3_ENDPOINT_URL`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION` | S3-клиент приложения |
 | `S3_BUCKET` | Bucket оригинальных отчётов; `minio-init` создаёт его при запуске |
 | `VALIDATION_BATCH_SIZE` | Максимальный размер batch staging/errors, по умолчанию `500` |
+| `CSV_MAX_FIELD_CHARS` | Максимум символов одного декодированного CSV-поля, по умолчанию `1_048_576` |
+| `CSV_MAX_RECORD_CHARS` | Максимум символов одной логической CSV-записи с учётом quoted multiline, по умолчанию `4_194_304` |
+| `CSV_ERROR_RAW_VALUE_CHARS` | Максимум символов одного значения в `ReportError.raw_data`, по умолчанию `1_024` |
+| `CSV_ERROR_RAW_TOTAL_CHARS` | Совокупный лимит строковых значений в `ReportError.raw_data`, по умолчанию `4_096` |
 | `WORKER_POLL_INTERVAL_SECONDS` | Пауза между polling-циклами, по умолчанию `2` секунды |
 | `WORKER_ADVISORY_LOCK_KEY` | Фиксированный ключ глобального worker-lock |
 | `TEST_DATABASE_URL` | Только integration-тесты; БД должна оканчиваться на `_test` и пересоздаётся тестами |
@@ -68,6 +74,11 @@ cp .env.example .env
 Максимальный размер загрузки зафиксирован в приложении как `1_073_741_824` байта
 (1 GiB) и не настраивается через окружение. `.env.example` содержит только локальные
 демонстрационные значения; реальные секреты в репозиторий добавлять нельзя.
+
+Лимит 1 GiB относится ко всему файлу. Для защиты памяти worker одно декодированное
+поле ограничено 1 Mi символов, а одна логическая запись — 4 Mi символов. Общий лимит
+учитывает quoted multiline record. Превышение сохраняется как validation error с
+детерминированно усечённым `raw_data`; оригинал в MinIO не удаляется.
 
 ## Запуск
 
@@ -79,7 +90,9 @@ docker compose run --rm api alembic current
 docker compose logs -f api worker
 ```
 
-Текущая Alembic head: `0002_add_report_checksum`.
+Текущая Alembic head: `0002_add_report_checksum`. После upgrade с `0001` legacy-отчёты
+сохраняются с `checksum_sha256 = null`; все новые uploads получают вычисленный
+64-символьный SHA-256.
 
 Остановка без удаления volumes:
 
@@ -92,8 +105,9 @@ docker compose down
 ## Health endpoints
 
 - `GET http://localhost:8000/health/live` подтверждает, что API-процесс отвечает.
-- `GET http://localhost:8000/health/ready` проверяет доступность настроенного MinIO
-  bucket. Текущая readiness-проверка отдельно не опрашивает PostgreSQL.
+- `GET http://localhost:8000/health/ready` проверяет bounded `SELECT 1` в PostgreSQL
+  и доступность настроенного MinIO bucket; при недоступности любой зависимости
+  возвращается безопасный `503`.
 
 ## API
 
@@ -113,7 +127,7 @@ docker compose down
 | `GET` | `/api/v1/products/{product_id}` | Один товар |
 | `GET` | `/api/v1/stocks` | Остатки; `warehouse_id`, `warehouse_code`, `product_id`, `sku`, `include_zero`, `limit`, `offset` |
 | `GET` | `/health/live` | Liveness |
-| `GET` | `/health/ready` | MinIO bucket readiness |
+| `GET` | `/health/ready` | PostgreSQL и MinIO readiness |
 
 Списки возвращаются в формате:
 
@@ -323,6 +337,8 @@ Integration-тесты пересоздают только БД из `TEST_DATAB
 - S3 и PostgreSQL не имеют общей транзакции; после неуспешной регистрации
   выполняется best-effort compensating delete незарегистрированного объекта.
 - Максимальный входной файл — 1 GiB.
+- Одна логическая CSV-запись ограничена 4 Mi символов, одно поле — 1 Mi символов;
+  эти лимиты не ограничивают суммарное число обычных строк в файле.
 - Полный 1-GiB fixture не хранится в репозитории; большие потоки генерируются тестами.
 
 ## Возможные production improvements

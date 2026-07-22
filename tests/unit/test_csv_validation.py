@@ -1,9 +1,15 @@
+import itertools
+import tracemalloc
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 import pytest
 
 from app.services.csv_validation import (
+    DEFAULT_ERROR_RAW_TOTAL_CHARS,
+    DEFAULT_ERROR_RAW_VALUE_CHARS,
+    DEFAULT_MAX_FIELD_CHARS,
+    DEFAULT_MAX_RECORD_CHARS,
     ValidatedRow,
     ValidationIssue,
     validate_csv_stream,
@@ -22,11 +28,27 @@ class ValidationResult:
     reached_eof: bool
 
 
-def validate(content: bytes, *, chunk_size: int = 7) -> ValidationResult:
+def validate(
+    content: bytes,
+    *,
+    chunk_size: int = 7,
+    max_field_chars: int = DEFAULT_MAX_FIELD_CHARS,
+    max_record_chars: int = DEFAULT_MAX_RECORD_CHARS,
+    error_raw_value_chars: int = DEFAULT_ERROR_RAW_VALUE_CHARS,
+    error_raw_total_chars: int = DEFAULT_ERROR_RAW_TOTAL_CHARS,
+) -> ValidationResult:
     rows: list[ValidatedRow] = []
     issues: list[ValidationIssue] = []
     chunks = (content[start : start + chunk_size] for start in range(0, len(content), chunk_size))
-    summary = validate_csv_stream(chunks, rows.append, issues.extend)
+    summary = validate_csv_stream(
+        chunks,
+        rows.append,
+        issues.extend,
+        max_field_chars=max_field_chars,
+        max_record_chars=max_record_chars,
+        error_raw_value_chars=error_raw_value_chars,
+        error_raw_total_chars=error_raw_total_chars,
+    )
     return ValidationResult(
         rows=rows,
         issues=issues,
@@ -87,6 +109,103 @@ def test_quoted_comma_and_multiline_fields() -> None:
     assert result.rows[0].warehouse_name == "Warehouse, North"
     assert result.rows[0].product_name == "Product\nmultiline"
     assert result.rows[0].line_number == 2
+
+
+def test_field_at_limit_is_accepted() -> None:
+    field_limit = 32
+    content = (HEADER + f"WH,W,SKU,{'P' * field_limit},1\n").encode()
+
+    result = validate(content, max_field_chars=field_limit, max_record_chars=256)
+
+    assert result.issues == []
+    assert result.rows[0].product_name == "P" * field_limit
+
+
+def test_field_above_limit_is_validation_error_with_bounded_raw_data() -> None:
+    field_limit = 32
+    result = validate(
+        (HEADER + f"WH,W,SKU,{'P' * (field_limit + 1)},1\n").encode(),
+        max_field_chars=field_limit,
+        max_record_chars=256,
+        error_raw_value_chars=16,
+        error_raw_total_chars=32,
+    )
+
+    assert result.rows == []
+    assert result.issues[0].code == "csv_field_too_large"
+    assert result.issues[0].line_number == 2
+    assert result.issues[0].raw_data is not None
+    assert result.issues[0].raw_data["_truncated"] is True
+    preview = result.issues[0].raw_data["record_preview"]
+    assert isinstance(preview, str)
+    assert len(preview) <= 16
+
+
+def test_quoted_multiline_record_above_total_limit_is_validation_error() -> None:
+    warehouse_name = "W" * 40
+    product_name = "line-one\n" + "x" * 31
+    content = (HEADER + f'WH,{warehouse_name},SKU,"{product_name}",1\n').encode()
+
+    result = validate(
+        content,
+        max_field_chars=64,
+        max_record_chars=80,
+        error_raw_value_chars=24,
+        error_raw_total_chars=96,
+    )
+
+    assert result.rows == []
+    assert result.row_count == 1
+    assert result.reached_eof
+    assert result.issues[0].code == "csv_record_too_large"
+    assert result.issues[0].line_number == 2
+    assert result.issues[0].raw_data is not None
+    assert result.issues[0].raw_data["_truncated"] is True
+    record_chars = result.issues[0].raw_data["record_chars"]
+    assert isinstance(record_chars, int)
+    assert record_chars > 80
+
+
+def test_invalid_row_raw_data_has_per_value_and_total_limits() -> None:
+    result = validate(
+        (HEADER + f"WH,W,SKU,Product,{'x' * 100}\n").encode(),
+        max_field_chars=256,
+        max_record_chars=512,
+        error_raw_value_chars=16,
+        error_raw_total_chars=32,
+    )
+
+    raw_data = result.issues[0].raw_data
+    assert raw_data is not None
+    assert raw_data["_truncated"] is True
+    raw_strings = [value for value in raw_data.values() if isinstance(value, str)]
+    assert all(len(value) <= 16 for value in raw_strings)
+    assert sum(map(len, raw_strings)) <= 32
+    assert any("[truncated]" in value for value in raw_strings)
+
+
+def test_oversized_record_has_bounded_memory_envelope() -> None:
+    rows: list[ValidatedRow] = []
+    issues: list[ValidationIssue] = []
+    repeated_chunk = b"x" * (256 * 1024)
+    chunks = itertools.chain(
+        [HEADER.encode(), b'WH,W,SKU,"'],
+        itertools.repeat(repeated_chunk, 64),
+        [b'",1\n'],
+    )
+
+    tracemalloc.start()
+    try:
+        summary = validate_csv_stream(chunks, rows.append, issues.extend)
+        _, peak_bytes = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert summary.row_count == 1
+    assert summary.reached_eof
+    assert rows == []
+    assert [issue.code for issue in issues] == ["csv_record_too_large"]
+    assert peak_bytes < 32 * 1024 * 1024
 
 
 @pytest.mark.parametrize(

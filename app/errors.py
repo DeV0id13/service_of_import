@@ -16,6 +16,12 @@ class StorageUnavailableError(ServiceError):
     public_message = "Object storage is temporarily unavailable"
 
 
+class DependencyUnavailableError(ServiceError):
+    status_code = 503
+    code = "dependency_unavailable"
+    public_message = "A required service is temporarily unavailable"
+
+
 class ObjectNotFoundError(StorageUnavailableError):
     code = "object_not_found"
     public_message = "The requested object was not found"

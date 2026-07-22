@@ -60,7 +60,7 @@ class Report(Base):
     object_bucket: Mapped[str] = mapped_column(Text)
     object_key: Mapped[str] = mapped_column(Text)
     size_bytes: Mapped[int] = mapped_column(BigInteger)
-    checksum_sha256: Mapped[str] = mapped_column(String(64))
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

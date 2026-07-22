@@ -20,6 +20,7 @@ _CONTEXT_FIELDS: Final = (
     "stocks_updated",
     "stocks_zeroed",
     "duration_seconds",
+    "signal",
 )
 
 

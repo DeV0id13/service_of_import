@@ -11,6 +11,11 @@ _CONTEXT_FIELDS: Final = (
     "status",
     "size_bytes",
     "object_key",
+    "row_count",
+    "error_count",
+    "batch_kind",
+    "batch_size",
+    "lock_released",
 )
 
 

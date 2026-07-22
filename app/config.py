@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     s3_secret_key: SecretStr = SecretStr("minioadmin")
     s3_bucket: str = "stock-reports"
     s3_region: str = "us-east-1"
+
+    worker_poll_interval_seconds: float = Field(default=2.0, gt=0)
+    worker_advisory_lock_key: int = 7_314_602_941
+    validation_batch_size: int = Field(default=500, ge=1, le=10_000)
 
 
 @lru_cache

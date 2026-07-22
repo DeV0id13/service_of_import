@@ -1,0 +1,3 @@
+warehouse_code,warehouse_name,sku,product_name,quantity
+DEMO-DUPLICATE,Duplicate warehouse,DUPLICATE-001,Duplicate product,10
+DEMO-DUPLICATE,Renamed duplicate warehouse,DUPLICATE-001,Renamed duplicate product,20

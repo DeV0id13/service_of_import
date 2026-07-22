@@ -1,0 +1,2 @@
+warehouse_code,warehouse_name,sku,product_name,quantity
+DEMO-ZERO,Demo zero warehouse,ZERO-001,Explicit zero product,0

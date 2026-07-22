@@ -1,0 +1,4 @@
+warehouse_code,warehouse_name,sku,product_name,quantity
+DEMO-NORTH,Demo north warehouse,SHARED-001,Shared product,15
+DEMO-SOUTH,Demo south warehouse,SHARED-001,Shared product,8
+DEMO-SOUTH,Demo south warehouse,SOUTH-002,South-only product,4

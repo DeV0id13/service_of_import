@@ -1,0 +1,2 @@
+warehouse_code,warehouse_name,sku,product_name,quantity
+,Warehouse without code,EMPTY-001,Product with invalid warehouse,10

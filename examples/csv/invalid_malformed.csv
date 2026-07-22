@@ -1,0 +1,2 @@
+warehouse_code,warehouse_name,sku,product_name,quantity
+DEMO-MALFORMED,Malformed warehouse,MALFORMED-001,"Unclosed product name,10

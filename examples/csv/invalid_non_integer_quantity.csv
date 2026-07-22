@@ -1,0 +1,2 @@
+warehouse_code,warehouse_name,sku,product_name,quantity
+DEMO-INVALID,Invalid warehouse,FRACTION-001,Fractional quantity product,1.5

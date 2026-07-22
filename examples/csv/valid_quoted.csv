@@ -1,0 +1,3 @@
+warehouse_code,warehouse_name,sku,product_name,quantity
+DEMO-QUOTED,"Warehouse, quoted",QUOTED-001,"Coffee, premium roast",11
+DEMO-QUOTED,"Warehouse, quoted",QUOTED-002,"Tea ""Special""",6

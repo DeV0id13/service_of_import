@@ -1,0 +1,6 @@
+warehouse_code,warehouse_name,sku,product_name,quantity
+DEMO-MSK,Demo Moscow warehouse,SNAP-001,Snapshot product one,12
+DEMO-MSK,Demo Moscow warehouse,SNAP-002,Snapshot product two,25
+DEMO-MSK,Demo Moscow warehouse,SNAP-003,Snapshot product three,4
+DEMO-SPB,Demo Saint Petersburg warehouse,SNAP-001,Snapshot product one,5
+DEMO-SPB,Demo Saint Petersburg warehouse,SNAP-004,Snapshot product four,9

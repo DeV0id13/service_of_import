@@ -1,0 +1,3 @@
+warehouse_code,warehouse_name,sku,product_name,quantity
+DEMO-MSK,Demo Moscow warehouse,SNAP-001,Snapshot product one,10
+DEMO-MSK,Demo Moscow warehouse,SNAP-002,Snapshot product two,20

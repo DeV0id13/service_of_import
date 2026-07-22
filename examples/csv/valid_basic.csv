@@ -1,0 +1,4 @@
+warehouse_code,warehouse_name,sku,product_name,quantity
+DEMO-BASIC,Demo basic warehouse,BASIC-001,Basic product one,10
+DEMO-BASIC,Demo basic warehouse,BASIC-002,Basic product two,20
+DEMO-BASIC,Demo basic warehouse,BASIC-003,Basic product three,30

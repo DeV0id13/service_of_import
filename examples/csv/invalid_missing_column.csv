@@ -1,0 +1,2 @@
+warehouse_code,warehouse_name,sku,product_name
+DEMO-INVALID,Invalid warehouse,MISSING-001,Missing quantity product

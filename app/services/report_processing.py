@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models import Report, ReportError, ReportStagingRow
+from app.services.apply_report import ApplyReportService, ApplyStepHook
 from app.services.csv_validation import ValidatedRow, ValidationIssue, validate_csv_stream
 from app.services.storage import ObjectStorage
 
@@ -21,6 +22,7 @@ class WorkerCycleOutcome(StrEnum):
     VALIDATION_FAILED = "validation_failed"
     PROCESSING_FAILED = "processing_failed"
     WAITING_FOR_APPLY = "waiting_for_apply"
+    COMPLETED = "completed"
 
 
 class LockConnectionLost(RuntimeError):
@@ -295,28 +297,50 @@ class ReportProcessor:
         storage: ObjectStorage,
         session_factory: Callable[[], Session],
         batch_size: int,
+        apply_step_hook: ApplyStepHook | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._validator = ReportValidator(storage, session_factory, batch_size)
+        self._applier = ApplyReportService(session_factory, after_step=apply_step_hook)
 
     def process(self, lock_connection: Connection) -> WorkerCycleOutcome:
-        report, waiting_for_apply = self._claim_or_recover_next_report()
+        report, ready_for_apply = self._claim_or_recover_next_report()
         if report is None:
             return WorkerCycleOutcome.NO_REPORT
-        if waiting_for_apply:
-            logger.info(
-                "Report is waiting for atomic apply",
-                extra={
-                    "event": "report_waiting_for_apply",
-                    "report_id": report.id,
-                    "stage": "validation",
-                    "status": "processing",
-                },
-            )
-            return WorkerCycleOutcome.WAITING_FOR_APPLY
 
         def assert_lock_alive() -> None:
             ensure_lock_connection_alive(lock_connection)
+
+        if ready_for_apply:
+            try:
+                self._applier.apply(report.id, assert_lock_alive)
+            except LockConnectionLost:
+                raise
+            except Exception as original_error:
+                logger.exception(
+                    "Report apply failed",
+                    extra={
+                        "event": "report_apply_failed",
+                        "report_id": report.id,
+                        "stage": "apply",
+                        "status": "failed",
+                    },
+                )
+                try:
+                    assert_lock_alive()
+                    self._mark_apply_failed(report.id)
+                except Exception as persistence_error:
+                    logger.exception(
+                        "Failed to persist report apply failure",
+                        extra={
+                            "event": "report_apply_failure_persist_failed",
+                            "report_id": report.id,
+                            "stage": "apply",
+                        },
+                    )
+                    raise original_error from persistence_error
+                return WorkerCycleOutcome.PROCESSING_FAILED
+            return WorkerCycleOutcome.COMPLETED
 
         try:
             return self._validator.validate(report, assert_lock_alive)
@@ -420,6 +444,42 @@ class ReportProcessor:
                 )
             )
 
+    def _mark_apply_failed(self, report_id: int) -> None:
+        with self._session_factory() as session, session.begin():
+            session.execute(delete(ReportStagingRow).where(ReportStagingRow.report_id == report_id))
+            session.execute(
+                insert(ReportError),
+                [
+                    {
+                        "report_id": report_id,
+                        "line_number": None,
+                        "field_name": None,
+                        "code": "apply_error",
+                        "message": "Atomic report apply failed",
+                        "raw_data": None,
+                    }
+                ],
+            )
+            error_count = session.scalar(
+                select(func.count())
+                .select_from(ReportError)
+                .where(ReportError.report_id == report_id)
+            )
+            session.execute(
+                update(Report)
+                .where(Report.id == report_id, Report.status == "processing")
+                .values(
+                    status="failed",
+                    finished_at=func.now(),
+                    error_count=error_count or 1,
+                    stocks_created=0,
+                    stocks_updated=0,
+                    stocks_zeroed=0,
+                    failure_kind="processing",
+                    failure_message="Atomic report apply failed",
+                )
+            )
+
 
 def process_next_report(
     engine: Engine,
@@ -428,6 +488,7 @@ def process_next_report(
     *,
     advisory_lock_key: int,
     batch_size: int,
+    apply_step_hook: ApplyStepHook | None = None,
 ) -> WorkerCycleOutcome:
     with engine.connect() as lock_connection:
         acquired = bool(
@@ -445,7 +506,12 @@ def process_next_report(
             extra={"event": "worker_lock_acquired", "stage": "worker"},
         )
         try:
-            processor = ReportProcessor(storage, session_factory, batch_size)
+            processor = ReportProcessor(
+                storage,
+                session_factory,
+                batch_size,
+                apply_step_hook=apply_step_hook,
+            )
             return processor.process(lock_connection)
         finally:
             try:

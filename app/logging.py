@@ -16,6 +16,10 @@ _CONTEXT_FIELDS: Final = (
     "batch_kind",
     "batch_size",
     "lock_released",
+    "stocks_created",
+    "stocks_updated",
+    "stocks_zeroed",
+    "duration_seconds",
 )
 
 

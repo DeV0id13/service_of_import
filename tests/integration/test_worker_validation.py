@@ -110,7 +110,7 @@ def subject_counts(session: Session) -> tuple[int, int, int]:
     )
 
 
-def test_valid_report_is_staged_and_waits_for_apply(
+def test_valid_report_is_staged_then_applied_on_next_cycle(
     test_engine: Engine,
     test_session_factory: sessionmaker[Session],
     worker_storage: S3ObjectStorage,
@@ -141,9 +141,31 @@ def test_valid_report_is_staged_and_waits_for_apply(
         assert [(row.line_number, row.quantity) for row in staging] == [(2, 10), (3, 0)]
         assert subject_counts(session) == (0, 0, 0)
 
-    assert run_worker(test_engine, worker_storage, test_session_factory) == (
-        WorkerCycleOutcome.WAITING_FOR_APPLY
+    assert (
+        run_worker(test_engine, worker_storage, test_session_factory)
+        == WorkerCycleOutcome.COMPLETED
     )
+    with test_session_factory() as session, session.begin():
+        report = session.get(Report, report_id)
+        assert report is not None
+        assert report.status == "completed"
+        assert report.finished_at is not None
+        assert report.stocks_created == 2
+        assert report.stocks_updated == 0
+        assert report.stocks_zeroed == 0
+        assert subject_counts(session) == (2, 2, 2)
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(ReportStagingRow)
+                .where(ReportStagingRow.report_id == report_id)
+            )
+            == 0
+        )
+        object_bucket = report.object_bucket
+        object_key = report.object_key
+
+    assert b"".join(worker_storage.download_stream(object_bucket, object_key)) == content
 
 
 def test_invalid_report_fails_without_subject_changes_and_keeps_original(
@@ -294,7 +316,7 @@ def test_partial_processing_is_cleared_and_revalidated_from_start(
         )
 
 
-def test_completed_validation_blocks_newer_pending_report(
+def test_completed_validation_is_applied_before_newer_pending_report(
     test_engine: Engine,
     test_session_factory: sessionmaker[Session],
     worker_storage: S3ObjectStorage,
@@ -327,11 +349,15 @@ def test_completed_validation_blocks_newer_pending_report(
         (HEADER + "NEW,New,SKU-2,P2,2\n").encode(),
     )
 
-    assert run_worker(test_engine, worker_storage, test_session_factory) == (
-        WorkerCycleOutcome.WAITING_FOR_APPLY
+    assert (
+        run_worker(test_engine, worker_storage, test_session_factory)
+        == WorkerCycleOutcome.COMPLETED
     )
     with test_session_factory() as session, session.begin():
+        older = session.get(Report, older_id)
         newer = session.get(Report, newer_id)
+        assert older is not None
+        assert older.status == "completed"
         assert newer is not None
         assert newer.status == "pending"
         assert newer.processing_started_at is None

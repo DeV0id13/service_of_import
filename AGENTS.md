@@ -48,6 +48,8 @@ Do not run `docker compose down -v` or delete persistent data without an explici
 
 - Use Python 3.12, FastAPI, SQLAlchemy 2.x, Alembic, PostgreSQL, MinIO/boto3, Pydantic Settings, pytest, Ruff, mypy, Docker, and Docker Compose.
 - Run API and worker as separate processes from one application image.
+- Worker shutdown must handle SIGTERM/SIGINT, stop before taking another report,
+  and retain the existing transaction/advisory-lock cleanup guarantees.
 - Use PostgreSQL as both the state store and the simple report queue. Do not add Redis, Celery, Kafka, or another broker.
 - API must save the original file to MinIO before creating a `pending` report.
 - A registered original file must remain downloadable for both successful and failed reports.
@@ -70,6 +72,10 @@ Do not run `docker compose down -v` or delete persistent data without an explici
 - Read files in fixed-size chunks and write staging/errors in bounded batches.
 - Validate the actual number of bytes read, not only `Content-Length`.
 - Accept UTF-8 and UTF-8 BOM with comma delimiter.
+- Bound one decoded CSV field to `CSV_MAX_FIELD_CHARS` and one quoted logical
+  record to `CSV_MAX_RECORD_CHARS`; never raise these limits to the 1 GiB file size.
+- Bound persisted validation `raw_data` with `CSV_ERROR_RAW_VALUE_CHARS` and
+  `CSV_ERROR_RAW_TOTAL_CHARS`, and mark deterministic truncation explicitly.
 - Use staging/SQL to detect duplicate `(warehouse_code, sku)` pairs across the complete file.
 
 ## Test discipline

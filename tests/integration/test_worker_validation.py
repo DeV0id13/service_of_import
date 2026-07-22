@@ -1,6 +1,13 @@
 import hashlib
+import json
+import os
+import signal
+import subprocess
+import sys
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from threading import Event, Lock, Thread
 from typing import Any
 from uuid import uuid4
 
@@ -9,6 +16,7 @@ import pytest
 from botocore.client import Config  # type: ignore[import-untyped]
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 from sqlalchemy import Engine, event, func, select
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
@@ -25,6 +33,100 @@ pytestmark = pytest.mark.integration
 WORKER_TEST_BUCKET = "stock-reports-worker-test"
 LOCK_KEY = 8_104_221_337
 HEADER = "warehouse_code,warehouse_name,sku,product_name,quantity\n"
+
+
+class WorkerLogCollector:
+    def __init__(self, process: subprocess.Popen[str]) -> None:
+        self._process = process
+        self._lines: list[str] = []
+        self._events: dict[str, Event] = {}
+        self._lock = Lock()
+        self._thread = Thread(target=self._collect, daemon=True)
+        self._thread.start()
+
+    def _collect(self) -> None:
+        assert self._process.stdout is not None
+        for line in self._process.stdout:
+            with self._lock:
+                self._lines.append(line)
+            try:
+                event_name = json.loads(line).get("event")
+            except (json.JSONDecodeError, AttributeError):
+                continue
+            if isinstance(event_name, str):
+                with self._lock:
+                    event = self._events.setdefault(event_name, Event())
+                event.set()
+
+    def wait_for(self, event_name: str, timeout: float = 10.0) -> bool:
+        with self._lock:
+            event = self._events.setdefault(event_name, Event())
+        return event.wait(timeout)
+
+    def finish(self) -> str:
+        self._thread.join(timeout=2)
+        with self._lock:
+            return "".join(self._lines)
+
+
+def start_worker_process(
+    test_database_url: URL,
+) -> tuple[subprocess.Popen[str], WorkerLogCollector]:
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "DATABASE_URL": test_database_url.render_as_string(hide_password=False),
+            "S3_BUCKET": WORKER_TEST_BUCKET,
+            "WORKER_ADVISORY_LOCK_KEY": str(LOCK_KEY + 1),
+            "WORKER_POLL_INTERVAL_SECONDS": "30",
+            "PYTHONUNBUFFERED": "1",
+        }
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-m", "app.worker"],
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    return process, WorkerLogCollector(process)
+
+
+def stop_worker_process(
+    process: subprocess.Popen[str],
+    collector: WorkerLogCollector,
+) -> str:
+    if process.poll() is None:
+        process.send_signal(signal.SIGTERM)
+    try:
+        return_code = process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+        pytest.fail("worker did not stop within five seconds after SIGTERM")
+    output = collector.finish()
+    assert return_code == 0, output
+    assert "worker_shutdown_requested" in output
+    assert "worker_stopped" in output
+    return output
+
+
+class BlockingDownloadStorage(S3ObjectStorage):
+    def __init__(
+        self,
+        delegate: S3ObjectStorage,
+        download_started: Event,
+        release_download: Event,
+    ) -> None:
+        self._delegate = delegate
+        self._download_started = download_started
+        self._release_download = release_download
+
+    def download_stream(self, bucket: str, key: str) -> Iterator[bytes]:
+        self._download_started.set()
+        if not self._release_download.wait(timeout=5):
+            raise RuntimeError("concurrent worker test did not release the download")
+        return self._delegate.download_stream(bucket, key)
 
 
 def clean_bucket(client: Any) -> None:
@@ -97,6 +199,10 @@ def run_worker(
     session_factory: sessionmaker[Session],
     *,
     batch_size: int = 2,
+    csv_max_field_chars: int = 1_048_576,
+    csv_max_record_chars: int = 4_194_304,
+    csv_error_raw_value_chars: int = 1_024,
+    csv_error_raw_total_chars: int = 4_096,
 ) -> WorkerCycleOutcome:
     return process_next_report(
         engine,
@@ -104,6 +210,10 @@ def run_worker(
         session_factory,
         advisory_lock_key=LOCK_KEY,
         batch_size=batch_size,
+        csv_max_field_chars=csv_max_field_chars,
+        csv_max_record_chars=csv_max_record_chars,
+        csv_error_raw_value_chars=csv_error_raw_value_chars,
+        csv_error_raw_total_chars=csv_error_raw_total_chars,
     )
 
 
@@ -212,6 +322,89 @@ def test_invalid_report_fails_without_subject_changes_and_keeps_original(
         assert all(error.message for error in errors)
         assert all(error.raw_data is not None for error in errors)
         assert subject_counts(session) == (0, 0, 0)
+        object_bucket = report.object_bucket
+        object_key = report.object_key
+
+    assert b"".join(worker_storage.download_stream(object_bucket, object_key)) == content
+
+
+@pytest.mark.parametrize(
+    ("content", "field_limit", "record_limit", "expected_code"),
+    [
+        (
+            (HEADER + f"WH,W,SKU,{'P' * 65},1\n").encode(),
+            64,
+            512,
+            "csv_field_too_large",
+        ),
+        (
+            (HEADER + f'WH,{'W' * 70},SKU,"line-one\n{'P' * 70}",1\n').encode(),
+            128,
+            128,
+            "csv_record_too_large",
+        ),
+    ],
+    ids=["field-limit", "multiline-record-limit"],
+)
+def test_oversized_csv_is_validation_failure_with_bounded_error_and_original(
+    test_engine: Engine,
+    test_session_factory: sessionmaker[Session],
+    worker_storage: S3ObjectStorage,
+    content: bytes,
+    field_limit: int,
+    record_limit: int,
+    expected_code: str,
+) -> None:
+    with test_session_factory() as session, session.begin():
+        warehouse = Warehouse(code="EXISTING", name="Existing")
+        product = Product(sku="EXISTING", name="Existing")
+        session.add_all([warehouse, product])
+        session.flush()
+        session.add(
+            StockBalance(
+                warehouse_id=warehouse.id,
+                product_id=product.id,
+                quantity=7,
+            )
+        )
+    report_id = create_report(test_session_factory, worker_storage, content)
+
+    outcome = run_worker(
+        test_engine,
+        worker_storage,
+        test_session_factory,
+        csv_max_field_chars=field_limit,
+        csv_max_record_chars=record_limit,
+        csv_error_raw_value_chars=16,
+        csv_error_raw_total_chars=64,
+    )
+
+    assert outcome == WorkerCycleOutcome.VALIDATION_FAILED
+    with test_session_factory() as session, session.begin():
+        report = session.get(Report, report_id)
+        assert report is not None
+        assert report.status == "failed"
+        assert report.failure_kind == "validation"
+        error = session.scalar(select(ReportError).where(ReportError.report_id == report_id))
+        assert error is not None
+        assert error.code == expected_code
+        assert error.raw_data is not None
+        assert error.raw_data["_truncated"] is True
+        raw_strings = [value for value in error.raw_data.values() if isinstance(value, str)]
+        assert all(len(value) <= 16 for value in raw_strings)
+        assert sum(map(len, raw_strings)) <= 64
+        assert subject_counts(session) == (1, 1, 1)
+        balance = session.scalar(select(StockBalance))
+        assert balance is not None
+        assert balance.quantity == 7
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(ReportStagingRow)
+                .where(ReportStagingRow.report_id == report_id)
+            )
+            == 0
+        )
         object_bucket = report.object_bucket
         object_key = report.object_key
 
@@ -402,6 +595,81 @@ def test_existing_lock_makes_worker_skip_processing(
         assert report.status == "pending"
 
 
+def test_two_concurrent_worker_cycles_preserve_lock_and_fifo(
+    test_engine: Engine,
+    test_session_factory: sessionmaker[Session],
+    worker_storage: S3ObjectStorage,
+) -> None:
+    older_id = create_report(
+        test_session_factory,
+        worker_storage,
+        (HEADER + "OLDER,Older,OLDER-SKU,Older product,1\n").encode(),
+    )
+    newer_id = create_report(
+        test_session_factory,
+        worker_storage,
+        (HEADER + "NEWER,Newer,NEWER-SKU,Newer product,2\n").encode(),
+    )
+    download_started = Event()
+    release_download = Event()
+    blocking_storage = BlockingDownloadStorage(
+        worker_storage,
+        download_started,
+        release_download,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_cycle = executor.submit(
+            run_worker,
+            test_engine,
+            blocking_storage,
+            test_session_factory,
+        )
+        assert download_started.wait(timeout=5)
+        second_cycle = executor.submit(
+            run_worker,
+            test_engine,
+            worker_storage,
+            test_session_factory,
+        )
+        try:
+            assert second_cycle.result(timeout=5) == WorkerCycleOutcome.LOCK_NOT_ACQUIRED
+        finally:
+            release_download.set()
+        assert first_cycle.result(timeout=5) == WorkerCycleOutcome.VALIDATED
+
+    with test_session_factory() as session, session.begin():
+        older = session.get(Report, older_id)
+        newer = session.get(Report, newer_id)
+        assert older is not None
+        assert older.status == "processing"
+        assert newer is not None
+        assert newer.status == "pending"
+        assert subject_counts(session) == (0, 0, 0)
+
+    assert run_worker(test_engine, worker_storage, test_session_factory) == (
+        WorkerCycleOutcome.COMPLETED
+    )
+    with test_session_factory() as session, session.begin():
+        older = session.get(Report, older_id)
+        newer = session.get(Report, newer_id)
+        assert older is not None
+        assert older.status == "completed"
+        assert newer is not None
+        assert newer.status == "pending"
+
+    assert run_worker(test_engine, worker_storage, test_session_factory) == (
+        WorkerCycleOutcome.VALIDATED
+    )
+    with test_session_factory() as session, session.begin():
+        older = session.get(Report, older_id)
+        newer = session.get(Report, newer_id)
+        assert older is not None
+        assert older.status == "completed"
+        assert newer is not None
+        assert newer.status == "processing"
+
+
 def test_lost_lock_connection_stops_attempt_and_leaves_report_recoverable(
     test_engine: Engine,
     test_session_factory: sessionmaker[Session],
@@ -571,3 +839,45 @@ def test_missing_original_becomes_processing_error(
         assert error is not None
         assert error.code == "processing_error"
         assert error.raw_data is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX SIGTERM lifecycle test")
+def test_worker_sigterm_is_graceful_and_restart_continues_queue(
+    test_database_url: URL,
+    test_session_factory: sessionmaker[Session],
+    worker_storage: S3ObjectStorage,
+) -> None:
+    idle_worker, idle_logs = start_worker_process(test_database_url)
+    try:
+        assert idle_logs.wait_for("worker_started")
+    finally:
+        stop_worker_process(idle_worker, idle_logs)
+
+    report_id = create_report(
+        test_session_factory,
+        worker_storage,
+        (HEADER + "RESTART,Restart,RESTART-SKU,Restart product,5\n").encode(),
+    )
+
+    validating_worker, validating_logs = start_worker_process(test_database_url)
+    try:
+        assert validating_logs.wait_for("validation_completed")
+    finally:
+        stop_worker_process(validating_worker, validating_logs)
+
+    with test_session_factory() as session, session.begin():
+        report = session.get(Report, report_id)
+        assert report is not None
+        assert report.status == "processing"
+
+    applying_worker, applying_logs = start_worker_process(test_database_url)
+    try:
+        assert applying_logs.wait_for("report_completed")
+    finally:
+        stop_worker_process(applying_worker, applying_logs)
+
+    with test_session_factory() as session, session.begin():
+        report = session.get(Report, report_id)
+        assert report is not None
+        assert report.status == "completed"
+        assert report.stocks_created == 1

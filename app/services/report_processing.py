@@ -3,13 +3,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
-from sqlalchemy import Connection, Engine, delete, func, insert, literal, select, text, update
+from sqlalchemy import Connection, Engine, delete, func, insert, literal, or_, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models import Report, ReportError, ReportStagingRow
 from app.services.apply_report import ApplyReportService, ApplyStepHook
-from app.services.csv_validation import ValidatedRow, ValidationIssue, validate_csv_stream
+from app.services.csv_validation import (
+    DEFAULT_ERROR_RAW_TOTAL_CHARS,
+    DEFAULT_ERROR_RAW_VALUE_CHARS,
+    DEFAULT_MAX_FIELD_CHARS,
+    DEFAULT_MAX_RECORD_CHARS,
+    ValidatedRow,
+    ValidationIssue,
+    validate_csv_stream,
+)
 from app.services.storage import ObjectStorage
 
 logger = logging.getLogger(__name__)
@@ -126,10 +134,23 @@ class ReportValidator:
         storage: ObjectStorage,
         session_factory: Callable[[], Session],
         batch_size: int,
+        *,
+        csv_max_field_chars: int,
+        csv_max_record_chars: int,
+        csv_error_raw_value_chars: int,
+        csv_error_raw_total_chars: int,
     ) -> None:
         self._storage = storage
         self._session_factory = session_factory
         self._batch_size = batch_size
+        self._csv_max_field_chars = csv_max_field_chars
+        self._csv_max_record_chars = csv_max_record_chars
+        self._csv_error_raw_value_chars = csv_error_raw_value_chars
+        self._csv_error_raw_total_chars = csv_error_raw_total_chars
+        self._duplicate_raw_value_chars = max(
+            1,
+            min(csv_error_raw_value_chars, csv_error_raw_total_chars // 4),
+        )
 
     def validate(
         self,
@@ -157,6 +178,10 @@ class ReportValidator:
             writer.add_valid_row,
             writer.add_issues,
             before_next_chunk=assert_lock_alive,
+            max_field_chars=self._csv_max_field_chars,
+            max_record_chars=self._csv_max_record_chars,
+            error_raw_value_chars=self._csv_error_raw_value_chars,
+            error_raw_total_chars=self._csv_error_raw_total_chars,
         )
         writer.flush_all()
         assert_lock_alive()
@@ -231,15 +256,22 @@ class ReportValidator:
             literal("The warehouse_code and sku pair is duplicated in this report"),
             func.jsonb_build_object(
                 "warehouse_code",
-                ranked.c.warehouse_code,
+                func.left(ranked.c.warehouse_code, self._duplicate_raw_value_chars),
                 "warehouse_name",
-                ranked.c.warehouse_name,
+                func.left(ranked.c.warehouse_name, self._duplicate_raw_value_chars),
                 "sku",
-                ranked.c.sku,
+                func.left(ranked.c.sku, self._duplicate_raw_value_chars),
                 "product_name",
-                ranked.c.product_name,
+                func.left(ranked.c.product_name, self._duplicate_raw_value_chars),
                 "quantity",
                 ranked.c.quantity,
+                "_truncated",
+                or_(
+                    func.char_length(ranked.c.warehouse_code) > self._duplicate_raw_value_chars,
+                    func.char_length(ranked.c.warehouse_name) > self._duplicate_raw_value_chars,
+                    func.char_length(ranked.c.sku) > self._duplicate_raw_value_chars,
+                    func.char_length(ranked.c.product_name) > self._duplicate_raw_value_chars,
+                ),
             ),
             func.now(),
         ).where(ranked.c.duplicate_rank > 1)
@@ -298,9 +330,22 @@ class ReportProcessor:
         session_factory: Callable[[], Session],
         batch_size: int,
         apply_step_hook: ApplyStepHook | None = None,
+        *,
+        csv_max_field_chars: int = DEFAULT_MAX_FIELD_CHARS,
+        csv_max_record_chars: int = DEFAULT_MAX_RECORD_CHARS,
+        csv_error_raw_value_chars: int = DEFAULT_ERROR_RAW_VALUE_CHARS,
+        csv_error_raw_total_chars: int = DEFAULT_ERROR_RAW_TOTAL_CHARS,
     ) -> None:
         self._session_factory = session_factory
-        self._validator = ReportValidator(storage, session_factory, batch_size)
+        self._validator = ReportValidator(
+            storage,
+            session_factory,
+            batch_size,
+            csv_max_field_chars=csv_max_field_chars,
+            csv_max_record_chars=csv_max_record_chars,
+            csv_error_raw_value_chars=csv_error_raw_value_chars,
+            csv_error_raw_total_chars=csv_error_raw_total_chars,
+        )
         self._applier = ApplyReportService(session_factory, after_step=apply_step_hook)
 
     def process(self, lock_connection: Connection) -> WorkerCycleOutcome:
@@ -489,6 +534,10 @@ def process_next_report(
     advisory_lock_key: int,
     batch_size: int,
     apply_step_hook: ApplyStepHook | None = None,
+    csv_max_field_chars: int = DEFAULT_MAX_FIELD_CHARS,
+    csv_max_record_chars: int = DEFAULT_MAX_RECORD_CHARS,
+    csv_error_raw_value_chars: int = DEFAULT_ERROR_RAW_VALUE_CHARS,
+    csv_error_raw_total_chars: int = DEFAULT_ERROR_RAW_TOTAL_CHARS,
 ) -> WorkerCycleOutcome:
     with engine.connect() as lock_connection:
         acquired = bool(
@@ -511,6 +560,10 @@ def process_next_report(
                 session_factory,
                 batch_size,
                 apply_step_hook=apply_step_hook,
+                csv_max_field_chars=csv_max_field_chars,
+                csv_max_record_chars=csv_max_record_chars,
+                csv_error_raw_value_chars=csv_error_raw_value_chars,
+                csv_error_raw_total_chars=csv_error_raw_total_chars,
             )
             return processor.process(lock_connection)
         finally:

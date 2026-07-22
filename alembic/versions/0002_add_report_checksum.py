@@ -20,7 +20,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.add_column(
         "reports",
-        sa.Column("checksum_sha256", sa.String(length=64), nullable=False),
+        sa.Column("checksum_sha256", sa.String(length=64), nullable=True),
     )
     op.create_check_constraint(
         "ck_reports_checksum_sha256_format",

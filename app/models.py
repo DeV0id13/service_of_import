@@ -48,6 +48,10 @@ class Report(Base):
             "AND stocks_created >= 0 AND stocks_updated >= 0 AND stocks_zeroed >= 0",
             name="nonnegative_counters",
         ),
+        CheckConstraint(
+            "checksum_sha256 ~ '^[0-9a-f]{64}$'",
+            name="checksum_sha256_format",
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
@@ -56,6 +60,7 @@ class Report(Base):
     object_bucket: Mapped[str] = mapped_column(Text)
     object_key: Mapped[str] = mapped_column(Text)
     size_bytes: Mapped[int] = mapped_column(BigInteger)
+    checksum_sha256: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -5,7 +5,7 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import URL, make_url
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
 from alembic.config import Config
@@ -99,6 +99,22 @@ def test_engine(test_database_url: URL, migrated_database: None) -> Iterator[Eng
         yield engine
     finally:
         engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def clean_test_database(test_engine: Engine) -> None:
+    with test_engine.begin() as connection:
+        connection.execute(
+            text(
+                "TRUNCATE TABLE report_errors, report_staging_rows, stock_balances, "
+                "products, warehouses, reports RESTART IDENTITY CASCADE"
+            )
+        )
+
+
+@pytest.fixture(scope="session")
+def test_session_factory(test_engine: Engine) -> sessionmaker[Session]:
+    return sessionmaker(bind=test_engine, class_=Session, expire_on_commit=False)
 
 
 @pytest.fixture

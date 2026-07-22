@@ -4,7 +4,14 @@ import sys
 from datetime import UTC, datetime
 from typing import Final
 
-_CONTEXT_FIELDS: Final = ("event", "report_id", "stage", "status")
+_CONTEXT_FIELDS: Final = (
+    "event",
+    "report_id",
+    "stage",
+    "status",
+    "size_bytes",
+    "object_key",
+)
 
 
 class JsonFormatter(logging.Formatter):

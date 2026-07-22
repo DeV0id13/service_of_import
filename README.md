@@ -1,10 +1,11 @@
 # Service of Import
 
-Каркас backend-сервиса импорта CSV-отчётов с остатками. На текущем этапе доступны
-FastAPI health endpoints, пустой worker-процесс, PostgreSQL и MinIO в Docker Compose,
-а также инфраструктура Alembic без миграций.
+Backend-сервис импорта CSV-отчётов с остатками. На текущем этапе доступны
+потоковая регистрация оригиналов в MinIO, API чтения отчётов, PostgreSQL-схема,
+health endpoints и пустой worker-процесс.
 
-Предметные модели, загрузка CSV, S3-адаптер и бизнес-логика worker ещё не реализованы.
+CSV пока не разбирается и не валидируется. Staging, применение остатков и бизнес-логика
+worker ещё не реализованы.
 
 ## Требования
 
@@ -22,13 +23,19 @@ docker compose ps
 API: <http://localhost:8000>
 
 - `GET /health/live` — процесс API жив;
-- `GET /health/ready` — каркас запущен с валидной конфигурацией;
+- `GET /health/ready` — bucket объектного хранилища доступен;
+- `POST /api/v1/reports` — потоково сохранить оригинал и создать `pending`;
+- `GET /api/v1/reports` — список отчётов;
+- `GET /api/v1/reports/{id}` — детали отчёта;
+- `GET /api/v1/reports/{id}/original` — потоково скачать оригинал;
 - Swagger UI: <http://localhost:8000/docs>;
 - MinIO Console: <http://localhost:9001>.
 
-На первом этапе доступность PostgreSQL и MinIO контролируется healthcheck-ами Compose.
-Проверки зависимостей из `/health/ready` будут добавлены вместе с соответствующими
-адаптерами на следующих этапах.
+Пример регистрации:
+
+```bash
+curl -F "file=@report.csv;type=text/csv" http://localhost:8000/api/v1/reports
+```
 
 Логи:
 
@@ -55,10 +62,8 @@ docker compose build
 
 ## Alembic
 
-Инфраструктура Alembic создана, но revisions и предметная схема отсутствуют.
-
 ```bash
+docker compose run --rm api alembic upgrade head
 docker compose run --rm api alembic current
+docker compose run --rm api alembic check
 ```
-
-Initial migration появится только на следующем этапе реализации.

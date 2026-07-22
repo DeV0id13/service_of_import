@@ -4,7 +4,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.errors import ERROR_HANDLERS
 from app.api.health import router as health_router
+from app.api.reports import router as reports_router
 from app.config import get_settings
 from app.logging import configure_logging
 
@@ -27,7 +29,10 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
+    for exception_type, handler in ERROR_HANDLERS.items():
+        application.add_exception_handler(exception_type, handler)
     application.include_router(health_router)
+    application.include_router(reports_router)
     return application
 
 

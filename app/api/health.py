@@ -1,7 +1,12 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+
+from app.config import get_settings
+from app.dependencies import get_storage
+from app.errors import StorageUnavailableError
+from app.services.storage import ObjectStorage
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -18,7 +23,9 @@ def live() -> HealthResponse:
 
 
 @router.get("/ready", response_model=HealthResponse)
-def ready() -> HealthResponse:
-    """Report that the scaffold process started with valid settings."""
+def ready(storage: Annotated[ObjectStorage, Depends(get_storage)]) -> HealthResponse:
+    """Report that the API can reach its configured object bucket."""
 
+    if not storage.is_available(get_settings().s3_bucket):
+        raise StorageUnavailableError
     return HealthResponse()

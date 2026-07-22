@@ -24,6 +24,7 @@ def make_report(**overrides: object) -> Report:
         "object_bucket": "stock-reports",
         "object_key": "reports/default.csv",
         "size_bytes": 100,
+        "checksum_sha256": "0" * 64,
     }
     values.update(overrides)
     return Report(**values)
